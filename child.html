@@ -1,0 +1,88 @@
+<title>أثر</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Reem+Kufi:wght@600&display=swap">
+<style>
+:root{
+  --bg:#F3F6F6; --surface:#FFFFFF; --ink:#132422; --muted:#5C6E6B; --line:#D9E2E0;
+  --accent:#0F8577; --accent-ink:#FFFFFF; --bad:#B3362B; --ok:#1E8A4F;
+  --f-display:'Reem Kufi',system-ui,sans-serif; --f-body:'IBM Plex Sans Arabic',system-ui,-apple-system,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);line-height:1.7;
+  display:flex;align-items:center;justify-content:center;padding:24px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;max-width:420px;width:100%;
+  padding:28px 24px;display:flex;flex-direction:column;gap:18px;text-align:center}
+.mark{width:52px;height:52px;margin:0 auto;color:var(--accent)}
+h1{font-family:var(--f-display);font-size:22px;margin:0}
+p{margin:0;color:var(--muted);font-size:15px}
+.name{color:var(--ink);font-weight:600}
+.btn{background:var(--accent);color:var(--accent-ink);border:0;border-radius:10px;padding:14px;font-size:16px;font-weight:600;cursor:pointer}
+.btn.stop{background:transparent;color:var(--bad);border:1px solid var(--line)}
+.status{display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;color:var(--ok);font-weight:600}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--ok);animation:pulse 2s infinite}
+@keyframes pulse{50%{opacity:.3}}
+.err{color:var(--bad);font-size:14px}
+.hint{font-size:13px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}
+[hidden]{display:none!important}
+</style>
+
+<div class="card">
+  <svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-7.1 7-12a7 7 0 1 0-14 0c0 4.9 7 12 7 12Z"/><circle cx="12" cy="9" r="2.6"/></svg>
+
+  <div id="v-ask">
+    <h1>طلب مشاركة الموقع</h1>
+    <p>مرحباً <span class="name" id="who">...</span>، طلب منك <b id="whoAdmin">المشرف</b> مشاركة موقعك الحالي مباشرة. موقعك يُرسل فقط أثناء فتح هذه الصفحة، ويتوقف فوراً إذا أغلقتها أو ضغطت "إيقاف المشاركة".</p>
+    <button class="btn" id="agree" type="button">موافق، شارك موقعي</button>
+    <p class="hint">بدون موافقتك لن يُرسل أي شيء.</p>
+  </div>
+
+  <div id="v-share" hidden>
+    <h1>جارٍ مشاركة موقعك</h1>
+    <div class="status"><span class="dot"></span><span id="shareTxt">تحديث مباشر</span></div>
+    <p id="lastUpd" class="hint" style="border:0;padding:0"></p>
+    <button class="btn stop" id="stop" type="button">إيقاف المشاركة</button>
+  </div>
+
+  <div id="v-err" hidden><p class="err" id="errTxt"></p></div>
+</div>
+
+<script>
+(function(){
+document.documentElement.lang='ar';document.documentElement.dir='rtl';
+var $=function(s){return document.querySelector(s)};
+var token=location.pathname.split('/').pop();
+var watchId=null,last=0;
+function show(id){['v-ask','v-share','v-err'].forEach(function(v){$('#'+v).hidden=(v!==id)})}
+function err(t){$('#errTxt').textContent=t;show('v-err')}
+
+fetch('/api/person/'+token).then(function(r){if(!r.ok)throw 0;return r.json()})
+  .then(function(j){$('#who').textContent=j.name})
+  .catch(function(){err('الرابط غير صالح أو انتهى.')});
+
+function sendLoc(pos){
+  var now=Date.now();if(now-last<8000)return;last=now;
+  fetch('/api/report/'+token,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({lat:pos.coords.latitude,lng:pos.coords.longitude,acc:Math.round(pos.coords.accuracy)})})
+   .then(function(r){if(r.ok)$('#lastUpd').textContent='آخر إرسال: الآن'});
+}
+function startSharing(){
+  if(!navigator.geolocation){err('متصفحك لا يدعم مشاركة الموقع.');return}
+  fetch('/api/consent/'+token,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sharing:true})});
+  show('v-share');
+  watchId=navigator.geolocation.watchPosition(sendLoc,function(e){
+    if(e.code===1){err('رفضت صلاحية الموقع من المتصفح. فعّلها من إعدادات الموقع إن غيّرت رأيك.')}
+    else{$('#shareTxt').textContent='تعذر تحديد الموقع حالياً...'}
+  },{enableHighAccuracy:true,maximumAge:5000,timeout:20000});
+}
+function stopSharing(){
+  if(watchId!=null)navigator.geolocation.clearWatch(watchId);
+  fetch('/api/consent/'+token,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sharing:false})});
+  show('v-ask');$('#agree').textContent='موافق، شارك موقعي من جديد';
+}
+$('#agree').addEventListener('click',startSharing);
+$('#stop').addEventListener('click',stopSharing);
+window.addEventListener('pagehide',function(){
+  if(watchId!=null)navigator.sendBeacon && navigator.sendBeacon('/api/consent/'+token,new Blob([JSON.stringify({sharing:false})],{type:'application/json'}));
+});
+})();
+</script>
